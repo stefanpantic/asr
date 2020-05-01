@@ -1,4 +1,3 @@
-import math
 from functools import reduce
 
 import tensorflow as tf
@@ -46,16 +45,23 @@ class Jasper:
 
             with tf.name_scope(f'{self._b}x{self._r}'):
                 bxr_out = prep_out
-                for layers, res_layers in self._blocks:
-                    res_conv, res_norm = res_layers
-                    for conv, norm, relu, drop in layers:
-                        conv_out = conv(bxr_out)
-                        norm_out = norm(conv_out, training=training)
-                        relu_out = relu(norm_out)
-                        bxr_out = drop(relu_out)
+                for b, (layers, res_layers) in enumerate(self._blocks):
+                    with tf.name_scope(f'b{b}'):
+                        res_conv, res_norm = res_layers
 
-                    res_conv_out = res_conv(bxr_out)
-                    bxr_out = res_norm(res_conv_out, training=training)
+                        r_out = bxr_out
+                        for r, (conv, norm, relu, drop) in enumerate(layers):
+                            with tf.name_scope(f'b{b}xr{r}'):
+                                conv_out = conv(bxr_out)
+                                norm_out = norm(conv_out, training=training)
+
+                                if r == self._r - 1:
+                                    res_conv_out = res_conv(r_out)
+                                    res_norm_out = res_norm(res_conv_out, training=training)
+                                    norm_out += res_norm_out
+
+                                relu_out = relu(norm_out)
+                                bxr_out = drop(relu_out)
 
             with tf.name_scope('Postprocessing'):
                 post_out = bxr_out
@@ -75,7 +81,7 @@ class Jasper:
                                     kernel_size=kernel_size,
                                     strides=strides,
                                     dilation_rate=dilation_rate,
-                                    padding='same'),
+                                    padding='same' if strides == 1 else 'valid'),
              BatchNormalization1D(),
              tf.keras.layers.ReLU(),
              tf.keras.layers.Dropout(rate=dropout_rate)] for _ in range(sub_block_count)

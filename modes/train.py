@@ -15,7 +15,7 @@ def train(**options):
     with tf.Session() as sess:
         # TODO: Test model implementation.
         input_ph = tf.placeholder(dtype=tf.float32, shape=[None, None, 64], name='input')
-        jasper = Jasper(b=1, r=2)
+        jasper = Jasper(b=1, r=3)
         logits = jasper(input_ph)
         writer = tf.summary.FileWriter('./logs', sess.graph)
         print(jasper.get_number_of_trainable_variables())
