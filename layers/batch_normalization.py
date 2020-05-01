@@ -9,5 +9,6 @@ class BatchNormalization1D:
 
     def call(self, inputs, training=None):
         expanded = tf.expand_dims(inputs, axis=1)
-        result = self._norm(expanded, training=training)
+        normalized = self._norm(expanded, training=training)
+        result = tf.squeeze(normalized, axis=1)
         return result
