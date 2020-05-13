@@ -13,10 +13,9 @@
 # limitations under the License.
 # ==============================================================================
 import tensorflow as tf
-from tensorflow.train import MomentumOptimizer
 
 
-class NovoGrad(MomentumOptimizer):
+class NovoGrad(tf.compat.v1.train.MomentumOptimizer):
     """
     Optimizer that implements SGD with layer-wise normalized gradients,
     when normalization is done by sqrt(ema(sqr(grads))), similar to Adam

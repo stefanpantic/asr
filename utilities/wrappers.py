@@ -108,7 +108,7 @@ class BackoffScaler(object):
         return self.scale
 
 
-class MixedPrecisionOptimizerWrapper(tf.train.Optimizer):
+class MixedPrecisionOptimizerWrapper(tf.compat.v1.train.Optimizer):
     def __init__(self, optimizer, loss_scale=None):
         super(MixedPrecisionOptimizerWrapper, self).__init__(optimizer._use_locking, optimizer._name + '-MP')
         self._optimizer = optimizer
