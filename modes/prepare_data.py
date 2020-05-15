@@ -18,7 +18,12 @@ def prepare_data(**options):
 
         wget.download(options['download_path'], out=options['dataset_path'])
 
+        import tarfile
+        _, file = options['download_path'].rsplit('/', 1)
+        tr = tarfile.open(os.path.join(options['dataset_path'], file))
+        tr.extractall(options['dataset_path'])
+
     if options['dataset'] == 'librispeech':
-        create_records(options['dataset_path'], options['output_path'])
+        create_records(os.path.join(options['dataset_path'], 'LibriSpeech'), options['output_path'])
     else:
         raise NotImplementedError
