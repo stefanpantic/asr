@@ -6,7 +6,7 @@ from models.base import AbstractModelBase
 class QuartzNet(AbstractModelBase):
     """NVIDIA's QuartzNet model from https://arxiv.org/pdf/1910.10261.pdf"""
 
-    def __init__(self, b, r, alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ\''):
+    def __init__(self, b, r, alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ\' '):
         super().__init__(b=b, r=r, alphabet=alphabet, conv_cls=tf.keras.layers.SeparableConv1D, name='QuartzNet')
 
     def get_layer_configuration(self):
