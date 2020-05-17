@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import glob2
 import numpy as np
@@ -78,13 +79,12 @@ def compute_mfcc(audio_data, sample_rate):
         mfcc_feat:[num_frames x F] matrix representing the mfcc.
     """
 
-    # z-score normalizer
-    audio_data = audio_data - np.mean(audio_data)
-    audio_data = audio_data / np.std(audio_data)
-
-    mfcc_feat = mfcc(audio_data, sample_rate, winlen=0.02, winstep=0.01,
-                     numcep=13, nfilt=26, nfft=512, lowfreq=0, highfreq=None,
+    mfcc_feat = mfcc(audio_data, sample_rate, winlen=0.025, winstep=0.01,
+                     numcep=64, nfilt=64, nfft=512, lowfreq=0, highfreq=None,
                      preemph=0.97, ceplifter=22, appendEnergy=True)
+
+    mfcc_feat = mfcc_feat - np.mean(mfcc_feat)
+    mfcc_feat = mfcc_feat / (np.std(mfcc_feat) + 1e-8)
 
     return mfcc_feat
 
@@ -158,14 +158,13 @@ def process_data(partition):
                 audio_file = parts[0]
                 file_path = os.path.join(os.path.dirname(filename), audio_file + '.flac')
                 audio, sample_rate = sf.read(file_path)
-                # feats[audio_file] = compute_mfcc(audio, sample_rate)
-                feats[audio_file] = compute_linear_spectrogram(audio, sample_rate)
+                feats[audio_file] = compute_mfcc(audio, sample_rate)
                 utt_len[audio_file] = feats[audio_file].shape[0]
                 target = ' '.join(parts[1:])
                 transcripts[audio_file] = [char_to_ind[i] for i in target]
-                if ((utt_len[audio_file] - 19) // 2 - 9) // 2 == 60:
-                    print("file[%s] -- utterance length: %d, transcripts length: %d" % (
-                        audio_file, ((utt_len[audio_file] - 19) // 2 - 9) // 2, len(transcripts[audio_file])))
+                print(f"file[{audio_file}] -- "
+                      f"utterance length: {utt_len[audio_file]}, "
+                      f"transcripts length: {len(transcripts[audio_file])}")
     return feats, transcripts, utt_len
 
 
@@ -194,10 +193,10 @@ def create_records(audio_path, output_path):
         min_t = int(utt_len[sorted_utts[0]] / 100)
 
         # Create destination directory
-        write_dir = os.path.join(output_path, partition.split('/')[-1])
-        if tf.gfile.Exists(write_dir):
-            tf.gfile.DeleteRecursively(write_dir)
-        tf.gfile.MakeDirs(write_dir)
+        write_dir = os.path.join(output_path, partition.split(os.path.sep)[-1])
+        if os.path.exists(write_dir):
+            shutil.rmtree(write_dir)
+        os.makedirs(write_dir)
 
         if 'train' in os.path.basename(partition):
             # Create multiple TFRecords based on utterance length for training
@@ -206,7 +205,7 @@ def create_records(audio_path, output_path):
             print('Processing training files...')
             for i in range(min_t, max_t + 1):
                 filename = os.path.join(write_dir, 'train' + '_' + str(i) + '.tfrecords')
-                writer[i] = tf.python_io.TFRecordWriter(filename)
+                writer[i] = tf.io.TFRecordWriter(filename)
                 count[i] = 0
 
             for utt in tqdm(sorted_utts):
@@ -227,8 +226,8 @@ def create_records(audio_path, output_path):
             # Create single TFRecord for dev and test partition
             filename = os.path.join(write_dir, os.path.basename(write_dir) + '.tfrecords')
             print('Creating', filename)
-            record_writer = tf.python_io.TFRecordWriter(filename)
-            for utt in sorted_utts:
+            record_writer = tf.io.TFRecordWriter(filename)
+            for utt in tqdm(sorted_utts):
                 example = make_example(utt_len[utt], feats[utt].tolist(), transcripts[utt])
                 record_writer.write(example)
             record_writer.close()
