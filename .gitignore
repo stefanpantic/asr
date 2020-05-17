@@ -193,4 +193,11 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# Logs directory
+logdir
+logs
+
+# Data directory
+data
+
 # End of https://www.gitignore.io/api/python,pycharm+all

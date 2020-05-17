@@ -26,7 +26,7 @@ def ctc_loss(logits, labels, seq_lens):
 
     ctc = tf.nn.ctc_loss(labels=labels,
                          inputs=logits,
-                         sequence_length=tf.floor((seq_lens - 11 / 2)) + 1,
+                         sequence_length=tf.cast(tf.floor((seq_lens - 33) / 2) + 1, tf.int32),
                          time_major=False)
 
     total_loss = mask_nans(ctc)
