@@ -3,7 +3,7 @@ import os
 import click
 import wget
 
-from utilities.data.preprocess import create_records
+from utilities.datasets.preprocess import create_records
 
 
 @click.command(name='prepare-data', help='Transform raw dataset into format used for training.')
