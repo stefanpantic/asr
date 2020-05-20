@@ -22,7 +22,7 @@ def read_and_parse_tsv(path):
     rgx = re.compile(r'[,.!?\\;]')
     labels = [rgx.sub('', lab.upper()) for lab in df.sentence]
     tmp = {pth: lab for pth, lab in zip(df.path, labels)}
-    paths_to_labels = {k: v for k, v in tmp if all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ\' ' for c in v)}
+    paths_to_labels = {k: v for k, v in tmp.items() if all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ\' ' for c in v)}
     return paths_to_labels
 
 
@@ -43,10 +43,43 @@ def process_common_voice_data(tsv_path):
     utt_len:
         Sequence length for each label.
     """
-    pth_to_lab = read_and_parse_tsv(tsv_path)
-    # TODO: Convert mp3 to flac
-    features = {path: compute_mfcc(*sf.read(path)) for path in pth_to_lab.keys()}
-    transcripts = pth_to_lab
+    # NOTE: This is kind of hacky but I don't see a workaround.
+    import os
+    import sys
+    import pathlib
+    import tempfile
+    import random
+    import string
+
+    def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
+        return ''.join(random.choice(chars) for _ in range(size))
+
+    ap = os.path.abspath(__file__)
+    dn = os.path.dirname(ap)
+    pth = pathlib.Path(dn)
+    platform = 'linux' if sys.platform.startswith('linux') else os.path.join('win32', 'bin')
+    os.environ['PATH'] += os.pathsep + os.path.join(pth.parent.parent, 'external', 'ffmpeg', platform)
+
+    import pydub
+
+    mp3_pth_to_lab = read_and_parse_tsv(tsv_path)
+    features = {}
+    data_dir = os.path.join(os.path.abspath(os.path.dirname(tsv_path)), 'clips')
+    with tempfile.TemporaryDirectory() as tempdir:
+        for file_name in mp3_pth_to_lab.keys():
+            mp3_path = os.path.join(data_dir, file_name)
+            mp3_data = pydub.AudioSegment.from_mp3(mp3_path)
+
+            flac_name = f'{id_generator()}.flac'
+            flac_path = os.path.join(tempdir, flac_name)
+
+            mp3_data.export(flac_path, format='flac', parameters=['-ar', '16000'])
+            audio, sr = sf.read(flac_path)
+            features[file_name] = compute_mfcc(audio, sr)
+
+            os.remove(flac_path)
+
+    transcripts = mp3_pth_to_lab
     utt_len = {pth: feat.shape[0] for pth, feat in features.items()}
 
     return features, transcripts, utt_len
