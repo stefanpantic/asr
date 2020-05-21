@@ -2,7 +2,9 @@ import re
 
 import pandas as pd
 import soundfile as sf
+from tqdm import tqdm
 
+from utilities.constants import ALPHABET
 from utilities.datasets.utilities import compute_mfcc
 
 
@@ -22,7 +24,7 @@ def read_and_parse_tsv(path):
     rgx = re.compile(r'[,.!?\\;]')
     labels = [rgx.sub('', lab.upper()) for lab in df.sentence]
     tmp = {pth: lab for pth, lab in zip(df.path, labels)}
-    paths_to_labels = {k: v for k, v in tmp.items() if all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ\' ' for c in v)}
+    paths_to_labels = {k: v for k, v in tmp.items() if all(c in ALPHABET for c in v)}
     return paths_to_labels
 
 
@@ -66,7 +68,7 @@ def process_common_voice_data(tsv_path):
     features = {}
     data_dir = os.path.join(os.path.abspath(os.path.dirname(tsv_path)), 'clips')
     with tempfile.TemporaryDirectory() as tempdir:
-        for file_name in mp3_pth_to_lab.keys():
+        for file_name in tqdm(mp3_pth_to_lab.keys(), desc='Computing MFCC'):
             mp3_path = os.path.join(data_dir, file_name)
             mp3_data = pydub.AudioSegment.from_mp3(mp3_path)
 
@@ -79,7 +81,8 @@ def process_common_voice_data(tsv_path):
 
             os.remove(flac_path)
 
-    transcripts = mp3_pth_to_lab
+    char_to_ind = {ch: i for (i, ch) in enumerate(ALPHABET)}
+    transcripts = {pth: [char_to_ind[i] for i in lab] for pth, lab in mp3_pth_to_lab.items()}
     utt_len = {pth: feat.shape[0] for pth, feat in features.items()}
 
     return features, transcripts, utt_len

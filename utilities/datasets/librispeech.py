@@ -3,7 +3,9 @@ import os
 import glob2
 import numpy as np
 import soundfile as sf
+from tqdm import tqdm
 
+from utilities.constants import ALPHABET
 from utilities.datasets.utilities import compute_mfcc
 
 
@@ -63,29 +65,31 @@ def _spectrogram_real(samples, window_size, stride_size, sample_rate):
     return fft, freqs
 
 
-def process_librispeech_data(partition):
+def process_librispeech_data(partition, verbose=False):
     """ Reads audio waveform and transcripts from a dataset partition
         and generates mfcc features.
 
     Parameters
     ----------
-        partition - represents the dataset partition name.
+    partition:
+        Represents the dataset partition name.
+    verbose:
+        Logging verbosity.
 
     Returns
     -------
-        feats: dict containing mfcc feature per utterance
-        transcripts: dict of lists representing transcript.
-        utt_len: dict of ints holding sequence length of each
-                 utterance in time frames.
+    feats: dict containing mfcc feature per utterance
+    transcripts: dict of lists representing transcript.
+    utt_len: dict of ints holding sequence length of each
+             utterance in time frames.
     """
-    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ' "
-    char_to_ind = {ch: i for (i, ch) in enumerate(alphabet)}
+    char_to_ind = {ch: i for (i, ch) in enumerate(ALPHABET)}
 
     feats = {}
     transcripts = {}
     utt_len = {}  # Required for sorting the utterances based on length
 
-    for filename in glob2.iglob(partition + '/**/*.txt'):
+    for filename in tqdm(list(glob2.iglob(os.path.join(partition, '**', '*.txt'))), desc='Computing MFCC'):
         with open(filename, 'r') as f:
             for line in f:
                 parts = line.split()
@@ -96,9 +100,8 @@ def process_librispeech_data(partition):
                 utt_len[audio_file] = feats[audio_file].shape[0]
                 target = ' '.join(parts[1:])
                 transcripts[audio_file] = [char_to_ind[i] for i in target]
-                print(f"file[{audio_file}] -- "
-                      f"utterance length: {utt_len[audio_file]}, "
-                      f"transcripts length: {len(transcripts[audio_file])}")
+                if verbose:
+                    print(f"file[{audio_file}] -- "
+                          f"utterance length: {utt_len[audio_file]}, "
+                          f"transcripts length: {len(transcripts[audio_file])}")
     return feats, transcripts, utt_len
-
-
