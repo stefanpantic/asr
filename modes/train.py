@@ -14,6 +14,8 @@ from utilities.wrappers import AutomaticLossScaler, MixedPrecisionOptimizerWrapp
 
 @click.command(name='train', help='Train ASR model.')
 @click.option('--dataset', required=True, help='Path to training dataset.')
+@click.option('--model', required=True, default='quartznet', type=click.Choice(['quartznet',
+                                                                                'jasper']), help='Which model to use.')
 @click.option('--log_dir', default='./logs/train', help='Where to log weights and graphs.')
 @click.option('--b', default=1, help='Model "B" parameter.')
 @click.option('--r', default=5, help='Model "R" parameter.')
@@ -31,14 +33,27 @@ def train(**options):
     # Prepare validation dataset
     mfcc_val_ins, labels_val_ins, seq_lens_val_ins = create_val_inputs(data_dir=options['dataset'])
 
-    quartz = QuartzNet(b=1, r=3)
-    train_logits = quartz(mfcc_train_ins)
+    # Model class catalogue
+    models = {
+        'quartznet': QuartzNet,
+        'jasper': Jasper,
+    }
+
+    try:
+        model_cls = models[options['model']]
+    except KeyError:
+        raise NotImplementedError(f'Invalid model {options["model"]}')
+
+    # Construct model
+    model = model_cls(b=options['b'], r=options['r'])
+    train_logits = model(mfcc_train_ins)
 
     # TODO: Calculate and log validation metrics
-    val_logits = quartz(mfcc_val_ins)
+    val_logits = model(mfcc_val_ins)
 
     # Calculate CTC loss
-    ctc = ctc_loss(train_logits, labels_train_ins, seq_lens_train_ins)
+    prep_conv_size = model.get_layer_configuration()['prep_config']['kernel_size']
+    ctc = ctc_loss(train_logits, labels_train_ins, seq_lens_train_ins, prep_conv_size)
 
     # Setup optimizer
     with tf.name_scope('optimizer'):
@@ -69,4 +84,3 @@ def train(**options):
             count += 1
             if count % 100 == 0:
                 print(f'Executed {count} batches...')
-
