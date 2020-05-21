@@ -5,6 +5,7 @@ import glob2
 import tensorflow as tf
 from tqdm import tqdm
 
+from utilities.datasets.commonvoice import process_common_voice_data
 from utilities.datasets.librispeech import process_librispeech_data
 
 
@@ -48,7 +49,7 @@ def make_example(seq_len, spec_feat, labels):
     return ex.SerializeToString()
 
 
-def create_records(audio_path, output_path):
+def create_records(audio_path, output_path, dataset):
     """ Pre-processes the raw audio and generates TFRecords.
         This function computes the mfcc features, encodes string transcripts
         into integers, and generates sequence examples for each utterance.
@@ -60,12 +61,32 @@ def create_records(audio_path, output_path):
         Path to dataset.
     output_path:
         Where to write .tfrecords.
+    dataset:
+        Either 'librispeech' or 'commonvoice'. Determines which dataset format to parse.
     """
-    for partition in sorted(glob2.glob(audio_path + '/*')):
-        if os.path.isfile(partition):
-            continue
-        print('Processing ' + partition)
-        feats, transcripts, utt_len = process_librispeech_data(partition)
+    assert os.path.exists(audio_path), f'Invalid audio path: {audio_path}. Path doesn\'t exist.'
+    assert dataset.lower() in ['librispeech', 'commonvoice'], f'Invalid dataset parameter: {dataset}. ' \
+                                                              f'Must be one of "librispeech", "commonvoice"'
+    dataset = dataset.lower()
+
+    for partition in sorted(glob2.glob(os.path.join(audio_path, '*'))):
+        if dataset == 'librispeech':
+            if os.path.isfile(partition):
+                continue
+
+            print('Processing ' + partition)
+            feats, transcripts, utt_len = process_librispeech_data(partition)
+            write_suffix = partition.split(os.path.sep)[-1]
+        elif dataset == 'commonvoice':
+            if os.path.isdir(partition) or any(e in partition for e in ['invalidated', 'other']):
+                continue
+
+            print('Processing ' + partition)
+            feats, transcripts, utt_len = process_common_voice_data(partition)
+            write_suffix, _ = os.path.splitext(os.path.basename(partition))
+        else:
+            raise NotImplementedError
+
         sorted_utts = sorted(utt_len, key=utt_len.get)
 
         # bin into groups of 100 frames.
@@ -73,7 +94,7 @@ def create_records(audio_path, output_path):
         min_t = int(utt_len[sorted_utts[0]] / 100)
 
         # Create destination directory
-        write_dir = os.path.join(output_path, partition.split(os.path.sep)[-1])
+        write_dir = os.path.join(output_path, write_suffix)
         if os.path.exists(write_dir):
             shutil.rmtree(write_dir)
         os.makedirs(write_dir)
@@ -88,7 +109,7 @@ def create_records(audio_path, output_path):
                 writer[i] = tf.io.TFRecordWriter(filename)
                 count[i] = 0
 
-            for utt in tqdm(sorted_utts):
+            for utt in tqdm(sorted_utts, desc='Writing TFRecords'):
                 example = make_example(utt_len[utt], feats[utt].tolist(), transcripts[utt])
                 index = int(utt_len[utt] / 100)
                 writer[index].write(example)
@@ -107,7 +128,7 @@ def create_records(audio_path, output_path):
             filename = os.path.join(write_dir, os.path.basename(write_dir) + '.tfrecords')
             print('Creating', filename)
             record_writer = tf.io.TFRecordWriter(filename)
-            for utt in tqdm(sorted_utts):
+            for utt in tqdm(sorted_utts, desc='Writing TFRecords'):
                 example = make_example(utt_len[utt], feats[utt].tolist(), transcripts[utt])
                 record_writer.write(example)
             record_writer.close()

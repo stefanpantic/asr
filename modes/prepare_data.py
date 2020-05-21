@@ -8,7 +8,7 @@ from utilities.datasets.preprocess import create_records
 
 @click.command(name='prepare-data', help='Transform raw dataset into format used for training.')
 @click.option('--download_path', default=None, help='Where to download dataset from (if specified).')
-@click.option('--dataset', required=True, type=click.Choice(['librispeech', 'common_voice']), help='Which dataset.')
+@click.option('--dataset', required=True, type=click.Choice(['librispeech', 'commonvoice']), help='Which dataset.')
 @click.option('--dataset_path', required=True, help='Path to training dataset.')
 @click.option('--output_path', required=True, help='Where to store .tfrecords.')
 def prepare_data(**options):
@@ -24,6 +24,8 @@ def prepare_data(**options):
         tr.extractall(options['dataset_path'])
 
     if options['dataset'] == 'librispeech':
-        create_records(os.path.join(options['dataset_path'], 'LibriSpeech'), options['output_path'])
+        create_records(os.path.join(options['dataset_path'], 'LibriSpeech'), options['output_path'], options['dataset'])
+    elif options['dataset'] == 'commonvoice':
+        create_records(os.path.join(options['dataset_path']), options['output_path'], options['dataset'])
     else:
         raise NotImplementedError
