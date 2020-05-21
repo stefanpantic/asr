@@ -123,7 +123,7 @@ class MixedPrecisionOptimizerWrapper(tf.compat.v1.train.Optimizer):
             self._loss_scale = self._loss_scaler.loss_scale
 
     def compute_gradients(self, loss, var_list=None,
-                          gate_gradients=tf.train.Optimizer.GATE_OP,
+                          gate_gradients=tf.compat.v1.train.Optimizer.GATE_OP,
                           aggregation_method=None,
                           colocate_gradients_with_ops=False,
                           grad_loss=None):
