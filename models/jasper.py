@@ -1,12 +1,13 @@
 import tensorflow as tf
 
 from models.base import AbstractModelBase
+from utilities.constants import ALPHABET
 
 
 class Jasper(AbstractModelBase):
     """NVIDIA's Jasper model from https://arxiv.org/pdf/1904.03288.pdf"""
 
-    def __init__(self, b, r, alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ\' '):
+    def __init__(self, b, r, alphabet=ALPHABET):
         super().__init__(b=b, r=r, alphabet=alphabet, conv_cls=tf.keras.layers.Conv1D, name='Jasper')
 
     def get_layer_configuration(self):
