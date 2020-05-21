@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 
-def ctc_loss(logits, labels, seq_lens):
+def ctc_loss(logits, labels, seq_lens, prep_conv_kernel_size):
     """Computes Connectionist Temporal Classification loss.
 
     Parameters
@@ -12,6 +12,8 @@ def ctc_loss(logits, labels, seq_lens):
         True labels.
     seq_lens
         Input sequence lengths.
+    prep_conv_kernel_size:
+        Kernel size of preprocess conv layer. Used to compute sequence_length.
 
     Returns
     -------
@@ -26,7 +28,7 @@ def ctc_loss(logits, labels, seq_lens):
 
     ctc = tf.nn.ctc_loss(labels=labels,
                          inputs=logits,
-                         sequence_length=tf.cast(tf.floor((seq_lens - 33) / 2) + 1, tf.int32),
+                         sequence_length=tf.cast(tf.floor((seq_lens - prep_conv_kernel_size) / 2) + 1, tf.int32),
                          time_major=False)
 
     total_loss = mask_nans(ctc)
