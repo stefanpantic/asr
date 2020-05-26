@@ -1,13 +1,16 @@
 import os
+from statistics import mean
 
 import click
 import tensorflow as tf
-import numpy as np
+from tqdm import tqdm
 
 from models.jasper import Jasper
 from models.quartznet import QuartzNet
 from utilities.datasets.read import create_train_inputs, create_val_inputs
+from utilities.decoders import beam_search_decoder
 from utilities.losses import ctc_loss
+from utilities.metrics import word_error_rate
 from utilities.optimizers import NovoGrad
 from utilities.wrappers import AutomaticLossScaler, MixedPrecisionOptimizerWrapper
 
@@ -22,16 +25,18 @@ from utilities.wrappers import AutomaticLossScaler, MixedPrecisionOptimizerWrapp
 @click.option('--lr', default=1e-3, help='Model learning rate.')
 @click.option('--batch_size', default=16, help='Model batch size.')
 @click.option('--epochs', default=400, help='Model batch size.')
+@click.option('--calculate_val_summaries_steps', default=1000, help='After how many steps to calculate metrics.')
 def train(**options):
     if not os.path.exists(options['dataset']):
         raise ValueError(f'Invalid option for --dataset, directory: {options["dataset"]} doesn\'t exist.')
 
     # Prepare train dataset
-    mfcc_train_ins, labels_train_ins, seq_lens_train_ins = create_train_inputs(data_dir=options['dataset'],
-                                                                               batch_size=options['batch_size'],
-                                                                               epochs=options['epochs'], shuffle=True)
+    mfcc_train_ins, labels_train_ins, seq_lens_train_ins, _ = create_train_inputs(data_dir=options['dataset'],
+                                                                                  batch_size=options['batch_size'],
+                                                                                  epochs=options['epochs'],
+                                                                                  shuffle=True)
     # Prepare validation dataset
-    mfcc_val_ins, labels_val_ins, seq_lens_val_ins = create_val_inputs(data_dir=options['dataset'])
+    mfcc_val_ins, labels_val_ins, seq_lens_val_ins, val_it = create_val_inputs(data_dir=options['dataset'])
 
     # Model class catalogue
     models = {
@@ -46,14 +51,21 @@ def train(**options):
 
     # Construct model
     model = model_cls(b=options['b'], r=options['r'])
-    train_logits = model(mfcc_train_ins)
 
-    # TODO: Calculate and log validation metrics
+    # Get train outputs
+    train_logits = model(mfcc_train_ins)
+    train_decoded = beam_search_decoder(train_logits, seq_lens_train_ins, beam_width=5)
+    train_wer = word_error_rate(train_decoded, labels_train_ins)
+
+    # Get validation outputs
     val_logits = model(mfcc_val_ins)
+    val_decoded = beam_search_decoder(val_logits, seq_lens_val_ins, beam_width=5)
+    val_wer = word_error_rate(val_decoded, labels_val_ins)
 
     # Calculate CTC loss
     prep_conv_size = model.get_layer_configuration()['prep_config']['kernel_size']
-    ctc = ctc_loss(train_logits, labels_train_ins, seq_lens_train_ins, prep_conv_size)
+    train_ctc = ctc_loss(train_logits, labels_train_ins, seq_lens_train_ins, prep_conv_size)
+    val_ctc = ctc_loss(val_logits, labels_val_ins, seq_lens_val_ins, prep_conv_size)
 
     # Setup optimizer
     with tf.name_scope('optimizer'):
@@ -66,21 +78,74 @@ def train(**options):
         novo_grad = NovoGrad(learning_rate=lr)
         scaler = AutomaticLossScaler(algorithm='backoff')
         optimizer = MixedPrecisionOptimizerWrapper(novo_grad, scaler)
-        train_op = optimizer.minimize(ctc)
+        train_op = optimizer.minimize(train_ctc)
+
+    # Create summary writer and operations
+    writer = tf.summary.FileWriter(logdir=options['log_dir'])
+
+    # Create summaries fn
+    def _create_summaries(name):
+        ctc_ph = tf.placeholder(dtype=tf.float32, shape=[], name=f'{name}_ctc')
+        wer_ph = tf.placeholder(dtype=tf.float32, shape=[], name=f'{name}_wer')
+        ctc_op = tf.summary.scalar(name=f'{name}/ctc_loss')
+        wer_op = tf.summary.scalar(name=f'{name}/wer')
+        writer.add_summary(ctc_op)
+        writer.add_summary(wer_op)
+
+        return ctc_op, wer_op, ctc_ph, wer_ph
+
+    # Create summaries
+    train_ctc_op, train_wer_op, train_ctc_ph, train_wer_ph = _create_summaries('train')
+    val_ctc_op, val_wer_op, val_ctc_ph, val_wer_ph = _create_summaries('val')
 
     # Create session config
     gpu_options = tf.GPUOptions(allow_growth=True)
     tf_config = tf.ConfigProto(allow_soft_placement=True, gpu_options=gpu_options)
 
+    class _DatasetInitializerHook(tf.train.SessionRunHook):
+        def __init__(self, *args):
+            self._args = args
+
+        def begin(self):
+            pass
+
+        def after_create_session(self, s, _):
+            s.run(self._args)
+
     # Create training hooks
+    init_hook = _DatasetInitializerHook(val_it.initializer)
     with tf.train.MonitoredTrainingSession(checkpoint_dir=options['log_dir'],
                                            config=tf_config,
-                                           summary_dir=None) as sess:
-        count = 0
+                                           hooks=[init_hook],
+                                           summary_dir=None,
+                                           save_summaries_secs=None,
+                                           save_summaries_steps=None) as sess:
         # Run training loop
+        batches = 0
         while not sess.should_stop():
-            # TODO: Calculate and log train metrics
-            sess.run([train_op])
-            count += 1
-            if count % 100 == 0:
-                print(f'Executed {count} batches...')
+            # Run training
+            for i in tqdm(range(options['calculate_val_summaries_steps']), initial=batches,
+                          total=batches + options['calculate_val_summaries_steps'], leave=False, desc='Training: '):
+                sess.run([train_op])
+                batches += 1
+
+                # Calculate train metrics
+                if i % 100 == 0:
+                    item_loss, item_wer = sess.run([train_ctc, train_wer])
+                    sess.run(train_ctc_op, feed_dict={train_ctc_ph: item_loss})
+                    sess.run(train_wer_op, feed_dict={train_wer_ph: item_wer})
+
+            # Run validation loop
+            val_losses = []
+            val_wers = []
+            while True:
+                try:
+                    item_loss, item_wer = sess.run([val_ctc, val_wer])
+                    val_losses.append(item_loss)
+                    val_wers.append(item_wer)
+                except tf.errors.OutOfRangeError:
+                    # Calculate validation metrics
+                    sess.run(val_ctc_op, feed_dict={val_ctc_ph: mean(val_losses)})
+                    sess.run(val_wer_op, feed_dict={val_wer_ph: mean(val_losses)})
+                    sess.run(val_it.initializer)
+                    break

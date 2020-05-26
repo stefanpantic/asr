@@ -4,7 +4,7 @@ import os
 import tensorflow as tf
 
 
-def _generate_feats_and_label_batch(filenames, batch_size, epochs=None, shuffle=False):
+def _generate_feats_and_label_batch(filenames, batch_size, epochs=None, shuffle=False, eval_data='train'):
     """Construct a queued batch of spectral features and transcriptions.
 
     Parameters
@@ -26,6 +26,8 @@ def _generate_feats_and_label_batch(filenames, batch_size, epochs=None, shuffle=
         transcripts. List of length batch_size.
     seq_lens:
         Sequence Lengths. List of length batch_size.
+    it:
+        Dataset iterator.
     """
 
     def _parse_example(serialized_example):
@@ -58,10 +60,13 @@ def _generate_feats_and_label_batch(filenames, batch_size, epochs=None, shuffle=
 
     if epochs is not None:
         dataset.repeat(epochs)
-    else:
-        dataset.repeat()
 
-    context_parsed, sequence_parsed = dataset.make_one_shot_iterator().get_next()
+    if eval_data == 'train':
+        it = dataset.make_one_shot_iterator()
+    else:
+        it = dataset.make_initializable_iterator()
+
+    context_parsed, sequence_parsed = it.get_next()
 
     # Generate a batch worth of examples after bucketing
     seq_len, (feats, labels) = tf.contrib.training.bucket_by_sequence_length(
@@ -73,7 +78,7 @@ def _generate_feats_and_label_batch(filenames, batch_size, epochs=None, shuffle=
         num_threads=16,
         dynamic_pad=True)
 
-    return feats, tf.cast(labels, tf.int32), seq_len
+    return feats, tf.cast(labels, tf.int32), seq_len, it
 
 
 def inputs(eval_data, data_dir, batch_size, epochs=None, shuffle=False):
@@ -107,27 +112,27 @@ def inputs(eval_data, data_dir, batch_size, epochs=None, shuffle=False):
             raise ValueError('Failed to find file: ' + file)
 
     # Generate a batch of images and labels by building up a queue of examples.
-    return _generate_feats_and_label_batch(filenames, batch_size, epochs, shuffle)
+    return _generate_feats_and_label_batch(filenames, batch_size, epochs, shuffle, eval_data)
 
 
 def create_train_inputs(data_dir, batch_size, epochs, shuffle=False):
     """Fetch features, labels and sequence_lengths."""
     with tf.device('/cpu'):
-        feats, labels, seq_lens = inputs(eval_data='train',
-                                         data_dir=data_dir,
-                                         batch_size=batch_size,
-                                         epochs=epochs,
-                                         shuffle=shuffle)
+        feats, labels, seq_lens, _ = inputs(eval_data='train',
+                                            data_dir=data_dir,
+                                            batch_size=batch_size,
+                                            epochs=epochs,
+                                            shuffle=shuffle)
 
-    return feats, labels, seq_lens
+    return feats, labels, seq_lens, None
 
 
 def create_val_inputs(data_dir):
     """Fetch features, labels and sequence_lengths."""
     with tf.device('/cpu'):
-        feats, labels, seq_lens = inputs(eval_data='val',
-                                         data_dir=data_dir,
-                                         batch_size=1,
-                                         shuffle=False)
+        feats, labels, seq_lens, it = inputs(eval_data='val',
+                                             data_dir=data_dir,
+                                             batch_size=1,
+                                             shuffle=False)
 
-    return feats, labels, seq_lens
+    return feats, labels, seq_lens, it
