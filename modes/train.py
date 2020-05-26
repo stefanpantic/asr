@@ -87,12 +87,16 @@ def train(**options):
     # Create summary writer and operations
     writer = tf.summary.FileWriter(logdir=options['log_dir'])
 
+    # Add learning rate summary
+    lr_summary_op = tf.summary.scalar(name='lr', tensor=lr)
+    writer.add_summary(lr_summary_op)
+
     # Create summaries fn
     def _create_summaries(name):
         ctc_ph = tf.placeholder(dtype=tf.float32, shape=[], name=f'{name}_ctc')
         wer_ph = tf.placeholder(dtype=tf.float32, shape=[], name=f'{name}_wer')
-        ctc_op = tf.summary.scalar(name=f'{name}/ctc_loss')
-        wer_op = tf.summary.scalar(name=f'{name}/wer')
+        ctc_op = tf.summary.scalar(name=f'{name}/ctc_loss', tensor=ctc_ph)
+        wer_op = tf.summary.scalar(name=f'{name}/wer', tensor=wer_ph)
         writer.add_summary(ctc_op)
         writer.add_summary(wer_op)
 
@@ -151,5 +155,8 @@ def train(**options):
                     # Calculate validation metrics
                     sess.run(val_ctc_op, feed_dict={val_ctc_ph: mean(val_losses)})
                     sess.run(val_wer_op, feed_dict={val_wer_ph: mean(val_losses)})
+                    # Log current learning rate
+                    sess.run(lr_summary_op)
+                    # Reinitialize validation iterator
                     sess.run(val_it.initializer)
                     break
