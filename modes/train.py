@@ -78,6 +78,10 @@ def train(**options):
         novo_grad = NovoGrad(learning_rate=lr)
         scaler = AutomaticLossScaler(algorithm='backoff')
         optimizer = MixedPrecisionOptimizerWrapper(novo_grad, scaler)
+
+    # Adding the BatchNormalization update ops to the graph manually
+    extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(extra_update_ops):
         train_op = optimizer.minimize(train_ctc)
 
     # Create summary writer and operations
