@@ -60,8 +60,6 @@ def _generate_feats_and_label_batch(filenames, batch_size, epochs=None, shuffle=
 
     if epochs is not None:
         dataset.repeat(epochs)
-    else:
-        dataset.repeat()
 
     if eval_data == 'train':
         it = dataset.make_one_shot_iterator()
