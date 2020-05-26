@@ -121,18 +121,21 @@ def train(**options):
                                            save_summaries_secs=None,
                                            save_summaries_steps=None) as sess:
         # Run training loop
+        batches = 0
         while not sess.should_stop():
-            # Train
-            for i in tqdm(range(options['calculate_val_summaries_steps'])):
+            # Run training
+            for i in tqdm(range(options['calculate_val_summaries_steps']), initial=batches,
+                          total=batches + options['calculate_val_summaries_steps'], leave=False, desc='Training: '):
                 sess.run([train_op])
+                batches += 1
 
                 # Calculate train metrics
-                if i % 10 == 0:
+                if i % 100 == 0:
                     item_loss, item_wer = sess.run([train_ctc, train_wer])
                     sess.run(train_ctc_op, feed_dict={train_ctc_ph: item_loss})
                     sess.run(train_wer_op, feed_dict={train_wer_ph: item_wer})
 
-            # Calculate validation metrics
+            # Run validation loop
             val_losses = []
             val_wers = []
             while True:
@@ -141,7 +144,8 @@ def train(**options):
                     val_losses.append(item_loss)
                     val_wers.append(item_wer)
                 except tf.errors.OutOfRangeError:
-                    sess.run(val_it.initializer)
+                    # Calculate validation metrics
                     sess.run(val_ctc_op, feed_dict={val_ctc_ph: mean(val_losses)})
                     sess.run(val_wer_op, feed_dict={val_wer_ph: mean(val_losses)})
+                    sess.run(val_it.initializer)
                     break
