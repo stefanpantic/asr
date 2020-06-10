@@ -8,7 +8,12 @@ class QuartzNet(AbstractModelBase):
     """NVIDIA's QuartzNet model from https://arxiv.org/pdf/1910.10261.pdf"""
 
     def __init__(self, b, r, alphabet=ALPHABET):
-        super().__init__(b=b, r=r, alphabet=alphabet, conv_cls=tf.keras.layers.SeparableConv1D, name='QuartzNet')
+        super().__init__(b=b,
+                         r=r,
+                         alphabet=alphabet,
+                         conv_cls=tf.keras.layers.SeparableConv1D,
+                         name='QuartzNet',
+                         last_layer_residual=True)
 
     def get_layer_configuration(self):
         """
