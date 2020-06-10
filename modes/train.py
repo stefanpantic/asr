@@ -1,3 +1,4 @@
+import json
 import os
 from statistics import mean
 
@@ -31,12 +32,17 @@ def train(**options):
         raise ValueError(f'Invalid option for --dataset, directory: {options["dataset"]} doesn\'t exist.')
 
     # Prepare train dataset
-    mfcc_train_ins, labels_train_ins, seq_lens_train_ins, _ = create_train_inputs(data_dir=options['dataset'],
-                                                                                  batch_size=options['batch_size'],
-                                                                                  epochs=options['epochs'],
-                                                                                  shuffle=True)
+    mfcc_train_ins, labels_train_ins, seq_lens_train_ins = create_train_inputs(data_dir=options['dataset'],
+                                                                               batch_size=options['batch_size'],
+                                                                               epochs=options['epochs'],
+                                                                               shuffle=True)
     # Prepare validation dataset
-    mfcc_val_ins, labels_val_ins, seq_lens_val_ins, val_it = create_val_inputs(data_dir=options['dataset'])
+    mfcc_val_ins, labels_val_ins, seq_lens_val_ins = create_val_inputs(data_dir=options['dataset'])
+
+    # Get dataset parameters
+    # TODO: Add size.json creation to prepare-data mode
+    with open(os.path.join(options['dataset'], 'size.json'), 'r') as f:
+        dataset_size = {k: int(v) for k, v in json.loads(f.read()).items()}
 
     # Model class catalogue
     models = {
@@ -52,18 +58,20 @@ def train(**options):
     # Construct model
     model = model_cls(b=options['b'], r=options['r'])
 
+    # Get model prep conv kernel size
+    prep_conv_size = model.get_layer_configuration()['prep_config']['kernel_size']
+
     # Get train outputs
-    train_logits = model(mfcc_train_ins)
-    train_decoded = beam_search_decoder(train_logits, seq_lens_train_ins, beam_width=5)
+    train_logits = model(mfcc_train_ins, training=True)
+    train_decoded = beam_search_decoder(train_logits, seq_lens_train_ins, prep_conv_kernel_size=prep_conv_size)
     train_wer = word_error_rate(train_decoded, labels_train_ins)
 
     # Get validation outputs
-    val_logits = model(mfcc_val_ins)
-    val_decoded = beam_search_decoder(val_logits, seq_lens_val_ins, beam_width=5)
+    val_logits = model(mfcc_val_ins, training=False)
+    val_decoded = beam_search_decoder(val_logits, seq_lens_val_ins, prep_conv_kernel_size=prep_conv_size)
     val_wer = word_error_rate(val_decoded, labels_val_ins)
 
     # Calculate CTC loss
-    prep_conv_size = model.get_layer_configuration()['prep_config']['kernel_size']
     train_ctc = ctc_loss(train_logits, labels_train_ins, seq_lens_train_ins, prep_conv_size)
     val_ctc = ctc_loss(val_logits, labels_val_ins, seq_lens_val_ins, prep_conv_size)
 
@@ -72,7 +80,7 @@ def train(**options):
         g_step = tf.train.get_or_create_global_step()
         lr = tf.train.polynomial_decay(learning_rate=options['lr'],
                                        global_step=g_step,
-                                       decay_steps=int(1e7),
+                                       decay_steps=dataset_size['train_size'] * options['epochs'],
                                        end_learning_rate=1e-7,
                                        power=2.0)
         novo_grad = NovoGrad(learning_rate=lr)
@@ -82,14 +90,13 @@ def train(**options):
     # Adding the BatchNormalization update ops to the graph manually
     extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(extra_update_ops):
-        train_op = optimizer.minimize(train_ctc)
+        train_op = optimizer.minimize(train_ctc, global_step=g_step)
 
     # Create summary writer and operations
     writer = tf.summary.FileWriter(logdir=options['log_dir'])
 
     # Add learning rate summary
     lr_summary_op = tf.summary.scalar(name='lr', tensor=lr)
-    writer.add_summary(lr_summary_op)
 
     # Create summaries fn
     def _create_summaries(name):
@@ -97,8 +104,6 @@ def train(**options):
         wer_ph = tf.placeholder(dtype=tf.float32, shape=[], name=f'{name}_wer')
         ctc_op = tf.summary.scalar(name=f'{name}/ctc_loss', tensor=ctc_ph)
         wer_op = tf.summary.scalar(name=f'{name}/wer', tensor=wer_ph)
-        writer.add_summary(ctc_op)
-        writer.add_summary(wer_op)
 
         return ctc_op, wer_op, ctc_ph, wer_ph
 
@@ -110,24 +115,12 @@ def train(**options):
     gpu_options = tf.GPUOptions(allow_growth=True)
     tf_config = tf.ConfigProto(allow_soft_placement=True, gpu_options=gpu_options)
 
-    class _DatasetInitializerHook(tf.train.SessionRunHook):
-        def __init__(self, *args):
-            self._args = args
-
-        def begin(self):
-            pass
-
-        def after_create_session(self, s, _):
-            s.run(self._args)
-
-    # Create training hooks
-    init_hook = _DatasetInitializerHook(val_it.initializer)
     with tf.train.MonitoredTrainingSession(checkpoint_dir=options['log_dir'],
                                            config=tf_config,
-                                           hooks=[init_hook],
                                            summary_dir=None,
                                            save_summaries_secs=None,
-                                           save_summaries_steps=None) as sess:
+                                           save_summaries_steps=None,
+                                           save_checkpoint_steps=100) as sess:
         # Run training loop
         batches = 0
         while not sess.should_stop():
@@ -140,23 +133,20 @@ def train(**options):
                 # Calculate train metrics
                 if i % 100 == 0:
                     item_loss, item_wer = sess.run([train_ctc, train_wer])
-                    sess.run(train_ctc_op, feed_dict={train_ctc_ph: item_loss})
-                    sess.run(train_wer_op, feed_dict={train_wer_ph: item_wer})
+                    gl_step = sess.run(g_step)
+                    writer.add_summary(sess.run(train_ctc_op, feed_dict={train_ctc_ph: item_loss}), global_step=gl_step)
+                    writer.add_summary(sess.run(train_wer_op, feed_dict={train_wer_ph: item_wer}), global_step=gl_step)
 
             # Run validation loop
             val_losses = []
             val_wers = []
-            while True:
-                try:
-                    item_loss, item_wer = sess.run([val_ctc, val_wer])
-                    val_losses.append(item_loss)
-                    val_wers.append(item_wer)
-                except tf.errors.OutOfRangeError:
-                    # Calculate validation metrics
-                    sess.run(val_ctc_op, feed_dict={val_ctc_ph: mean(val_losses)})
-                    sess.run(val_wer_op, feed_dict={val_wer_ph: mean(val_losses)})
-                    # Log current learning rate
-                    sess.run(lr_summary_op)
-                    # Reinitialize validation iterator
-                    sess.run(val_it.initializer)
-                    break
+            for _ in range(dataset_size['validation_size']):
+                item_loss, item_wer = sess.run([val_ctc, val_wer])
+                val_losses.append(item_loss)
+                val_wers.append(item_wer)
+
+            # Calculate validation metrics
+            gl_step = sess.run(g_step)
+            writer.add_summary(sess.run(val_ctc_op,  feed_dict={val_ctc_ph: mean(val_losses)}), global_step=gl_step)
+            writer.add_summary(sess.run(val_wer_op, feed_dict={val_wer_ph: mean(val_losses)}), global_step=gl_step)
+            writer.add_summary(sess.run(lr_summary_op), global_step=gl_step)
