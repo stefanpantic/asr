@@ -31,8 +31,8 @@ class QuartzNet(AbstractModelBase):
                 'dropout_rate': [0, 0, 0, 0, 0],
             },
             'post_config': {
-                'filters': [87, 1],
-                'kernel_size': [512, 1024],
+                'filters': [512, 1024],
+                'kernel_size': [87, 1],
                 'dilation_rate': [1, 1],
                 'dropout_rate': [0, 0],
             },
