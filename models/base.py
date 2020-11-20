@@ -9,12 +9,13 @@ from layers.batch_normalization import BatchNormalization1D
 class AbstractModelBase:
     """Abstracted base model for the NVIDIA Jasper family of models."""
 
-    def __init__(self, b, r, alphabet, conv_cls, name):
+    def __init__(self, b, r, alphabet, conv_cls, name, last_layer_residual=False):
         self._b = b
         self._r = r
         self._alphabet = alphabet + '*'  # Add 'blank' symbol
         self._name = name
         self._conv_cls = conv_cls
+        self._last_layer_residual = last_layer_residual
 
         # Get layer configurations
         layer_configuration = self.get_layer_configuration()
@@ -39,19 +40,27 @@ class AbstractModelBase:
                         for f, k, d in zip(self._block_filters, self._block_kernels, self._block_dropouts)]
 
         # Postprocess block layers
-        post_blocks = [
-            self._build_block(filters=f,
-                              kernel_size=k,
-                              strides=1,
-                              dilation_rate=di,
-                              dropout_rate=dr,
-                              conv_cls=self._conv_cls) for f, k, di, dr in zip(post_config['filters'],
-                                                                               post_config['kernel_size'],
-                                                                               post_config['dilation_rate'],
-                                                                               post_config['dropout_rate'])
-        ]
-        post_a, post_b = post_blocks
-        self._post_blocks = [post_a[0], post_b[0]]
+        post_a_filters, post_b_filters = post_config['filters']
+        post_a_kernel_size, post_b_kernel_size = post_config['kernel_size']
+        post_a_dilation_rate, post_b_dilation_rate = post_config['dilation_rate']
+        post_a_dropout_rate, post_b_dropout_rate = post_config['dropout_rate']
+
+        post_a_block_fn = self._build_block_with_residual if last_layer_residual else self._build_block
+        post_a = post_a_block_fn(filters=post_a_filters,
+                                 kernel_size=post_a_kernel_size,
+                                 strides=1,
+                                 dilation_rate=post_a_dilation_rate,
+                                 dropout_rate=post_a_dropout_rate,
+                                 conv_cls=self._conv_cls)
+
+        post_b = self._build_block(filters=post_b_filters,
+                                   kernel_size=post_b_kernel_size,
+                                   strides=1,
+                                   dilation_rate=post_b_dilation_rate,
+                                   dropout_rate=post_b_dropout_rate,
+                                   conv_cls=self._conv_cls)
+
+        self._post_blocks = [post_a, post_b[0]]
 
         # Last layer (alphabet + 'blank')
         self._last_layer = tf.keras.layers.Conv1D(filters=len(self._alphabet), kernel_size=1, name='last_layer')
@@ -87,9 +96,20 @@ class AbstractModelBase:
 
             with tf.name_scope('postprocess'):
                 post_out = bxr_out
-                for post_conv, post_norm, post_relu, post_drop in self._post_blocks:
+                for i, layers in enumerate(self._post_blocks):
+                    if self._last_layer_residual and i == 0:
+                        layers, (res_conv, res_norm) = layers
+                        layers = layers[0]
+
+                    post_conv, post_norm, post_relu, post_drop = layers
+
                     post_conv_out = post_conv(post_out)
                     post_norm_out = post_norm(post_conv_out, training=training)
+
+                    if self._last_layer_residual and i == 0:
+                        post_res_conv_out = res_conv(post_norm_out)
+                        post_norm_out = res_norm(post_res_conv_out)
+
                     post_relu_out = post_relu(post_norm_out)
                     post_out = post_drop(post_relu_out, training=training)
 
@@ -111,8 +131,14 @@ class AbstractModelBase:
 
         return block_layers
 
-    def _build_block_with_residual(self, filters, kernel_size, dropout_rate):
-        block_layers = self._build_block(filters, kernel_size, 1, 1, dropout_rate, self._conv_cls, self._r)
+    def _build_block_with_residual(self, filters, kernel_size, dropout_rate, strides=1, dilation_rate=1, **_):
+        block_layers = self._build_block(filters,
+                                         kernel_size,
+                                         strides,
+                                         dilation_rate,
+                                         dropout_rate,
+                                         self._conv_cls,
+                                         self._r)
         block_residual_conv = tf.keras.layers.Conv1D(filters=filters, kernel_size=1, padding='same')
         block_residual_norm = BatchNormalization1D()
 
