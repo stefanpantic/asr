@@ -72,7 +72,10 @@ def create_records(audio_path, output_path, dataset):
                                                               f'Must be one of "librispeech", "commonvoice"'
     dataset = dataset.lower()
 
-    for partition in sorted(glob2.glob(os.path.join(audio_path, '*'))):
+    size_json = defaultdict(int)
+    partitions = itertools.chain.from_iterable(
+        [glob2.glob(os.path.join(audio_path, pattern)) for pattern in ['dev*', 'train*', 'test*']])
+    for partition in sorted(partitions):
         if dataset == 'librispeech':
             if os.path.isfile(partition):
                 continue
@@ -126,6 +129,10 @@ def create_records(audio_path, output_path, dataset):
             for i in range(min_t, max_t + 1):
                 if count[i] < 20:
                     os.remove(os.path.join(write_dir, 'train' + '_' + str(i) + '.tfrecords'))
+                    count[i] = 0
+
+            # Save dataset size
+            size_json['train_size'] = sum(count.keys())
         else:
             # Create single TFRecord for dev and test partition
             filename = os.path.join(write_dir, os.path.basename(write_dir) + '.tfrecords')
@@ -135,4 +142,28 @@ def create_records(audio_path, output_path, dataset):
                 example = make_example(utt_len[utt], feats[utt].tolist(), transcripts[utt])
                 record_writer.write(example)
             record_writer.close()
-            print('Processed ' + str(len(sorted_utts)) + ' audio files')
+
+            partition_size = len(sorted_utts)
+            partition_name = os.path.basename(partition)
+            if 'dev' in partition_name:
+                size_json['validation_size'] = partition_size
+            elif 'test' in partition_name:
+                size_json['test_size'] = partition_size
+            else:
+                raise ValueError(f'Invalid partition {partition_name}')
+
+    json_path = os.path.join(output_path, 'size.json')
+    loaded_json = defaultdict(int)
+    if os.path.exists(json_path):
+        with open(os.path.join(json_path), 'r') as f:
+            loaded_json = {k: int(v) for k, v in json.loads(f.read()).items()}
+
+    for key in ['train_size', 'validation_size', 'test_size']:
+        if size_json[key]:
+            loaded_json[key] = size_json[key]
+
+    # Save size.json to dataset output directory
+    with open(os.path.join(output_path, 'size.json'), 'w') as f:
+        f.truncate()
+        json.dump(loaded_json, f)
+        print(f'Processed partitions: {dict(size_json)}')
