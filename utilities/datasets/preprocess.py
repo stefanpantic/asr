@@ -1,5 +1,8 @@
+import itertools
+import json
 import os
 import shutil
+from collections import defaultdict
 
 import glob2
 import tensorflow as tf
