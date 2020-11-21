@@ -40,7 +40,6 @@ def train(**options):
     mfcc_val_ins, labels_val_ins, seq_lens_val_ins = create_val_inputs(data_dir=options['dataset'])
 
     # Get dataset parameters
-    # TODO: Add size.json creation to prepare-data mode
     with open(os.path.join(options['dataset'], 'size.json'), 'r') as f:
         dataset_size = {k: int(v) for k, v in json.loads(f.read()).items()}
 
